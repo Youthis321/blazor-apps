@@ -1,0 +1,167 @@
+﻿@page "/todo"
+@using TodoItem.Models
+@inject IJSRuntime JS
+
+<h3>Todo (@todos.Count(todo => !todo.IsDone))</h3>
+
+<!-- Input Baru -->
+<div class="input-group mb-3">
+    <span class="input-group-text">New Task</span>
+    <input class="form-control" @bind="newTodo" placeholder="Task title" />
+    <select class="form-select" @bind="newCategory">
+        <option value="Pribadi">Pribadi</option>
+        <option value="Pekerjaan">Pekerjaan</option>
+        <option value="Belanja">Belanja</option>
+    </select>
+    <input type="datetime-local" class="form-control" @bind="newDeadline" />
+    <button class="btn btn-primary" @onclick="AddTodo">Add</button>
+</div>
+
+<!-- Tombol Kontrol -->
+<div class="input-group mb-3">
+    <button class="btn btn-primary" @onclick="CompleteAll">Complete All</button>
+    <button class="btn btn-success" @onclick="UncompleteAll">Uncomplete All</button>
+    <button class="btn btn-danger" @onclick="ClearCompleted">Clear Completed</button>
+</div>
+
+<!-- Filter -->
+<div class="mb-3">
+    <label>Filter by Category:</label>
+    <select class="form-select" @bind="filterCategory">
+        <option value="">All</option>
+        <option value="Pribadi">Pribadi</option>
+        <option value="Pekerjaan">Pekerjaan</option>
+        <option value="Belanja">Belanja</option>
+    </select>
+    <label>Filter by Status:</label>
+    <select class="form-select" @bind="filterStatus">
+        <option value="">All</option>
+        <option value="Pending">Pending</option>
+        <option value="Done">Done</option>
+    </select>
+</div>
+
+<!-- Daftar Tugas -->
+<ul>
+    @foreach (var todo in FilteredTodos)
+    {
+        <div class="input-group mb-3 @(IsOverdue(todo) ? "bg-danger text-white" : "")">
+            <div class="input-group-text">
+                <input type="checkbox" @bind="todo.IsDone" @bind:after="SaveTodos" />
+            </div>
+            <input class="form-control" @bind="todo.Title" @bind:after="SaveTodos" />
+            <span class="input-group-text">@todo.Category</span>
+            <input type="datetime-local" class="form-control" @bind="todo.Deadline" @bind:after="SaveTodos" />
+            <button class="btn btn-danger" @onclick="() => RemoveTodo(todo)">X</button>
+        </div>
+    }
+</ul>
+
+@code {
+    private List<TodoItem> todos = new();
+    private string newTodo = "";
+    private string newCategory = "Pribadi";
+    private DateTime? newDeadline = null;
+    private string filterCategory = "";
+    private string filterStatus = "";
+
+    // Computed property untuk filter
+    private List<TodoItem> FilteredTodos => todos
+        .Where(todo => string.IsNullOrEmpty(filterCategory) || todo.Category == filterCategory)
+        .Where(todo => string.IsNullOrEmpty(filterStatus) || 
+            (filterStatus == "Pending" && !todo.IsDone) || 
+            (filterStatus == "Done" && todo.IsDone))
+        .ToList();
+
+    // Memuat data dari localStorage setelah render
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var savedTodos = await JS.InvokeAsync<string>("localStorage.getItem", "todos");
+            if (!string.IsNullOrEmpty(savedTodos))
+            {
+                todos = System.Text.Json.JsonSerializer.Deserialize<List<TodoItem>>(savedTodos) ?? new();
+                StateHasChanged(); // Perbarui UI setelah data dimuat
+            }
+            CheckDeadlines(); // Cek deadline saat pertama kali dimuat
+        }
+    }
+
+    // Menyimpan ke localStorage
+    private async Task SaveTodos()
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(todos);
+        await JS.InvokeVoidAsync("localStorage.setItem", "todos", json);
+        CheckDeadlines(); // Periksa deadline setiap ada perubahan
+    }
+
+    // Tambah tugas
+    void AddTodo()
+    {
+        if (!string.IsNullOrWhiteSpace(newTodo))
+        {
+            todos.Add(new TodoItem 
+            { 
+                Title = newTodo, 
+                Category = newCategory, 
+                Deadline = newDeadline 
+            });
+            newTodo = string.Empty;
+            newCategory = "Pribadi";
+            newDeadline = null;
+            _ = SaveTodos(); // Simpan ke localStorage
+        }
+    }
+
+    // Hapus tugas
+    void RemoveTodo(TodoItem todo)
+    {
+        todos.Remove(todo);
+        _ = SaveTodos();
+    }
+
+    void CompleteAll()
+    {
+        if (todos.Any(todo => !todo.IsDone))
+        {
+            todos.ForEach(todo => todo.IsDone = true);
+            _ = SaveTodos();
+        }
+    }
+
+    void UncompleteAll()
+    {
+        if (todos.Any(todo => todo.IsDone))
+        {
+            todos.ForEach(todo => todo.IsDone = false);
+            _ = SaveTodos();
+        }
+    }  
+
+    void ClearCompleted()
+    {
+        if (todos.Any(todo => todo.IsDone))
+        {
+            todos.RemoveAll(todo => todo.IsDone);
+            _ = SaveTodos();
+        }
+    }
+
+    // Cek apakah tugas sudah lewat deadline
+    bool IsOverdue(TodoItem todo)
+    {
+        return todo.Deadline.HasValue && !todo.IsDone && todo.Deadline.Value < DateTime.Now;
+    }
+
+    // Notifikasi sederhana untuk deadline
+    private void CheckDeadlines()
+    {
+        var overdueTasks = todos.Where(t => IsOverdue(t)).ToList();
+        if (overdueTasks.Any())
+        {
+            var titles = string.Join(", ", overdueTasks.Select(t => t.Title));
+            JS.InvokeVoidAsync("alert", $"Tugas berikut sudah lewat deadline: {titles}");
+        }
+    }
+}
